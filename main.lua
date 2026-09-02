@@ -16,12 +16,34 @@ local function log_debug(...)
 end
 
 local MEDIA_EXTENSIONS = {
-	mp4 = true, mkv = true, avi = true, mov = true, webm = true,
-	flv = true, wmv = true, m4v = true, mpg = true, mpeg = true,
-	["3gp"] = true, ogv = true, ts = true, mts = true, m2ts = true,
-	mp3 = true, flac = true, wav = true, m4a = true, ogg = true,
-	aac = true, wma = true, opus = true, ape = true, alac = true,
-	aiff = true, dsf = true, dff = true,
+	mp4 = true,
+	mkv = true,
+	avi = true,
+	mov = true,
+	webm = true,
+	flv = true,
+	wmv = true,
+	m4v = true,
+	mpg = true,
+	mpeg = true,
+	["3gp"] = true,
+	ogv = true,
+	ts = true,
+	mts = true,
+	m2ts = true,
+	mp3 = true,
+	flac = true,
+	wav = true,
+	m4a = true,
+	ogg = true,
+	aac = true,
+	wma = true,
+	opus = true,
+	ape = true,
+	alac = true,
+	aiff = true,
+	dsf = true,
+	dff = true,
 }
 
 local function is_media_file(file)
@@ -278,11 +300,7 @@ local update_cache = ya.sync(function(st, path, entry)
 	else
 		st.cache[path] = false
 	end
-	if ui.render then
-		ui.render()
-	else
-		ya.render()
-	end
+	ui.render()
 end)
 
 --- FFProbe Execution ---
@@ -290,11 +308,15 @@ end)
 local function fetch_info(path)
 	local output, err = Command("ffprobe")
 		:arg({
-			"-v", "error",
-			"-show_entries", "stream=width,height,codec_name,r_frame_rate,bit_rate,channels,display_aspect_ratio",
-			"-show_entries", "format=format_name,duration",
-			"-of", "json",
-			path
+			"-v",
+			"error",
+			"-show_entries",
+			"stream=width,height,codec_name,r_frame_rate,bit_rate,channels,display_aspect_ratio",
+			"-show_entries",
+			"format=format_name,duration",
+			"-of",
+			"json",
+			path,
 		})
 		:stdout(Command.PIPED)
 		:stderr(Command.NULL)
@@ -324,7 +346,7 @@ local function fetch(_, job)
 	end
 
 	if #targets == 0 then
-		return true
+		return require("noop"):fetch(job)
 	end
 
 	for _, path in ipairs(targets) do
@@ -336,7 +358,7 @@ local function fetch(_, job)
 		end
 	end
 
-	return false
+	return require("noop"):fetch(job)
 end
 
 --- Toggle Functions ---
@@ -345,11 +367,7 @@ local toggle_stat = ya.sync(function(st, stat_name)
 	if st.enabled[stat_name] ~= nil then
 		st.enabled[stat_name] = not st.enabled[stat_name]
 	end
-	if ui.render then
-		ui.render()
-	else
-		ya.render()
-	end
+	ui.render()
 	return st.enabled[stat_name]
 end)
 
@@ -369,11 +387,7 @@ local toggle_all = ya.sync(function(st)
 		st.enabled[k] = new_state
 	end
 
-	if ui.render then
-		ui.render()
-	else
-		ya.render()
-	end
+	ui.render()
 	return new_state
 end)
 
@@ -381,11 +395,7 @@ local disable_all = ya.sync(function(st)
 	for k in pairs(st.enabled) do
 		st.enabled[k] = false
 	end
-	if ui.render then
-		ui.render()
-	else
-		ya.render()
-	end
+	ui.render()
 end)
 
 --- Sort Functions ---
@@ -437,7 +447,7 @@ local function set_linemode(mode)
 		end
 		return
 	end
-	ya.mgr_emit("linemode", { mode })
+	ya.emit("linemode", { mode })
 end
 
 local restore_linemode_direct = ya.sync(function(_, mode)
@@ -454,7 +464,7 @@ local function schedule_restore(mode)
 	if DEBUG then
 		log_debug("schedule restore", mode)
 	end
-	ya.mgr_emit("plugin", { PLUGIN_ID, "restore", mode })
+	ya.emit("plugin", { PLUGIN_ID, "restore", mode })
 end
 
 local function sort_with(mode, reverse)
@@ -463,7 +473,7 @@ local function sort_with(mode, reverse)
 		log_debug("sort", mode, "reverse", tostring(reverse), "prev", tostring(prev))
 	end
 	set_linemode(mode)
-	ya.mgr_emit("sort", {
+	ya.emit("sort", {
 		"linemode",
 		reverse = reverse,
 	})
@@ -571,7 +581,7 @@ local function setup(st, opts)
 
 		local display = table.concat(parts, " ")
 		local span = st.style and ui.Span(display):style(st.style) or display
-		return ui.Line { " ", span }
+		return ui.Line({ " ", span })
 	end, st.order)
 
 	-- Individual linemode functions for direct usage
