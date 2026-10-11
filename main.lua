@@ -282,9 +282,20 @@ end
 
 --- Thread-safe State Functions ---
 
-local claim_path = ya.sync(function(st, path)
-	if st.cache[path] ~= nil then
-		return false
+local claim_path = ya.sync(function(st, path, len, mtime)
+	local cached = st.cache[path]
+	if cached ~= nil then
+		local fp = st.fp and st.fp[path]
+		if fp then
+			-- Fingerprint exists: reuse cache only on exact match
+			if fp.len == len and fp.mtime == mtime then
+				return false
+			end
+			-- Mismatch: stale entry, allow refetch below
+		else
+			-- No fingerprint (legacy entry): fall back to old path-only behavior
+			return false
+		end
 	end
 	if st.pending[path] then
 		return false
@@ -293,15 +304,37 @@ local claim_path = ya.sync(function(st, path)
 	return true
 end)
 
-local update_cache = ya.sync(function(st, path, entry)
+local update_cache = ya.sync(function(st, path, entry, len, mtime)
 	st.pending[path] = nil
 	if entry then
 		st.cache[path] = entry
 	else
 		st.cache[path] = false
 	end
+	st.fp[path] = { len = len, mtime = mtime }
 	ui.render()
 end)
+
+--- Return cached info only when mtime+size fingerprint still matches.
+--- Returns nil for missing, failed (false), or stale entries, so the
+--- display never shows another file's stats after delete + rename.
+local function get_valid_entry(st, file)
+	local path = tostring(file.url)
+	local entry = st.cache[path]
+	if entry == nil or entry == false then
+		return nil
+	end
+	local fp = st.fp and st.fp[path]
+	if fp then
+		local cha = file.cha
+		local len = cha and cha.len
+		local mtime = cha and cha.mtime
+		if fp.len ~= len or fp.mtime ~= mtime then
+			return nil
+		end
+	end
+	return entry
+end
 
 --- FFProbe Execution ---
 
@@ -339,8 +372,10 @@ local function fetch(_, job)
 	for _, file in ipairs(job.files) do
 		if is_media_file(file) then
 			local path = tostring(file.url)
-			if claim_path(path) then
-				targets[#targets + 1] = path
+			local len = file.cha and file.cha.len
+			local mtime = file.cha and file.cha.mtime
+			if claim_path(path, len, mtime) then
+				targets[#targets + 1] = { path = path, len = len, mtime = mtime }
 			end
 		end
 	end
@@ -349,12 +384,12 @@ local function fetch(_, job)
 		return require("noop"):fetch(job)
 	end
 
-	for _, path in ipairs(targets) do
-		local info = fetch_info(path)
+	for _, t in ipairs(targets) do
+		local info = fetch_info(t.path)
 		if info then
-			update_cache(path, info)
+			update_cache(t.path, info, t.len, t.mtime)
 		else
-			update_cache(path, false)
+			update_cache(t.path, false, t.len, t.mtime)
 		end
 	end
 
@@ -487,6 +522,7 @@ end
 local function setup(st, opts)
 	opts = opts or {}
 	st.cache = {}
+	st.fp = {}
 	st.pending = {}
 	st.enabled = {
 		duration = opts.duration == true,
@@ -505,8 +541,8 @@ local function setup(st, opts)
 
 	-- Register display callback using children_add
 	Linemode:children_add(function(self)
-		local entry = st.cache[tostring(self._file.url)]
-		if not entry or entry == false then
+		local entry = get_valid_entry(st, self._file)
+		if not entry then
 			return ""
 		end
 
@@ -586,96 +622,96 @@ local function setup(st, opts)
 
 	-- Individual linemode functions for direct usage
 	function Linemode:ffmpeg_duration()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and entry.duration and format_duration(entry.duration) or ""
 	end
 
 	function Linemode:ffmpeg_resolution()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and format_resolution(entry.width, entry.height) or ""
 	end
 
 	function Linemode:ffmpeg_codec()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and format_codec(entry.codec) or ""
 	end
 
 	function Linemode:ffmpeg_fps()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and format_fps(entry.fps_str) or ""
 	end
 
 	function Linemode:ffmpeg_bitrate()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and format_bitrate(entry.bitrate) or ""
 	end
 
 	function Linemode:ffmpeg_audio_codec()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and format_audio_codec(entry.audio_codec) or ""
 	end
 
 	function Linemode:ffmpeg_audio_channels()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and format_audio_channels(entry.audio_channels) or ""
 	end
 
 	function Linemode:ffmpeg_format()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and format_format(entry.format) or ""
 	end
 
 	function Linemode:ffmpeg_aspect()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and format_aspect(entry.aspect) or ""
 	end
 
 	-- Sort linemode functions (using same formatting as display for readability)
 	function Linemode:ffmpeg_duration_sort()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and entry.duration and format_duration(entry.duration) or ""
 	end
 
 	function Linemode:ffmpeg_res_sort()
-		local entry = st.cache[tostring(self._file.url)]
-		if not entry or entry == false then
+		local entry = get_valid_entry(st, self._file)
+		if not entry then
 			return ""
 		end
 		return format_resolution(entry.width, entry.height)
 	end
 
 	function Linemode:ffmpeg_codec_sort()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and format_codec(entry.codec) or ""
 	end
 
 	function Linemode:ffmpeg_fps_sort()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and format_fps(entry.fps_str) or ""
 	end
 
 	function Linemode:ffmpeg_bitrate_sort()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and format_bitrate_kbps(entry.bitrate) or ""
 	end
 
 	function Linemode:ffmpeg_acodec_sort()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and format_audio_codec(entry.audio_codec) or ""
 	end
 
 	function Linemode:ffmpeg_channels_sort()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and format_audio_channels(entry.audio_channels) or ""
 	end
 
 	function Linemode:ffmpeg_format_sort()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and format_format(entry.format) or ""
 	end
 
 	function Linemode:ffmpeg_aspect_sort()
-		local entry = st.cache[tostring(self._file.url)]
+		local entry = get_valid_entry(st, self._file)
 		return entry and format_aspect(entry.aspect) or ""
 	end
 end
